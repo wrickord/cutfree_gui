@@ -13,12 +13,15 @@ from sklearn.model_selection import KFold
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from transformers import AutoModelForTokenClassification
 
 # Local application imports
-sys.path.append(os.path.abspath(os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    ".."
-)))
+sys.path.append(os.path.abspath(
+    os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), 
+        ".."
+    )
+))
 from pytools.config import DEVICE, SEED
 from pytools.directory import SaveDirectory
 from pytools.dataloaders import Dataloader
@@ -29,63 +32,105 @@ from pytools.train import Train
 from pytools.analyze import Analyze
 from pytools.predict import Predict
 
+# Constants
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+BATCH_SIZE = 128
+MAX_SEQ_LENGTH = 89
+EARLY_STOPPING = 30
+CUSTOM_MODEL = True
+if CUSTOM_MODEL:
+    HYPERPARAMETERS = {
+        "input_dims": 64,
+        "num_heads": 8,
+        "num_layers": 1,
+        "ff_dims": 64,
+        "enc_dropout": 0.30,
+        "num_mlp_layers": 2,
+        "mlp_dims": [256, 128],
+        "mlp_dropout": 0.20, 
+        "optimizer_name": "AdamW",
+        "lr": 1e-3,
+        "epochs": 250
+    }
+else:
+    MODEL_NAME = "InstaDeepAI/nucleotide-transformer-v2-50m-multi-species"
+    HYPERPARAMETERS = {
+        "num_mlp_layers": 3,
+        "mlp_dims": [512, 256, 128],
+        "mlp_dropout": 0.20, 
+        "optimizer_name": "AdamW",
+        "lr": 1e-3,
+        "epochs": 250
+    }
+
 
 class Model(nn.Module):
-    def __init__(self, 
-                 vocab_size, 
-                 input_dims, 
-                 num_heads, 
-                 num_layers, 
-                 ff_dims, 
-                 max_seq_length, 
-                 enc_dropout, 
-                 mlp_dims, 
-                 num_classes,
-                 mlp_dropout):
+    def __init__(self, vocab=None, classes=None):
         super(Model, self).__init__()
-        self.transformer = Transformer(
-            vocab_size, 
-            input_dims, 
-            num_heads, 
-            num_layers, 
-            ff_dims,
-            max_seq_length, 
-            enc_dropout
-        )
-        self.mlp_input_dims = input_dims + 1
+
+        if CUSTOM_MODEL:
+            self.transformer = Transformer(
+                vocab_size=len(vocab), 
+                input_dims=HYPERPARAMETERS["input_dims"], 
+                num_heads=HYPERPARAMETERS["num_heads"],
+                num_layers=HYPERPARAMETERS["num_layers"],
+                ff_dims=HYPERPARAMETERS["ff_dims"],
+                max_seq_length=MAX_SEQ_LENGTH,
+                dropout=HYPERPARAMETERS["enc_dropout"]
+            )
+            mlp_input_dims = HYPERPARAMETERS["input_dims"] + 1
+        else:
+            self.transformer = AutoModelForTokenClassification.from_pretrained(
+                MODEL_NAME,
+                trust_remote_code=True
+            )
+            self.transformer = nn.Sequential(
+                self.transformer.esm.embeddings,
+                self.transformer.esm.encoder
+            )
+            mlp_input_dims = 512 + 1
         self.mlp = MLP(
-            input_dims=self.mlp_input_dims, 
-            num_layers=len(mlp_dims), 
-            mlp_dims=mlp_dims, 
-            num_classes=num_classes, 
-            dropout=mlp_dropout
+            input_dims=mlp_input_dims,
+            num_layers=HYPERPARAMETERS["num_mlp_layers"],
+            mlp_dims=HYPERPARAMETERS["mlp_dims"],
+            num_classes=len(classes),
+            dropout=HYPERPARAMETERS["mlp_dropout"]
         )
 
     def forward(self, input, extra_input):
-        transformer_output = self.transformer(input)
-        combined_output = torch.cat(
-            (transformer_output, extra_input.unsqueeze(1)), 
-            dim=1
-        )
+        if CUSTOM_MODEL:
+            transformer_output = self.transformer(input)
+            combined_output = torch.cat(
+                (transformer_output, extra_input.unsqueeze(1)), 
+                dim=1
+            )
+        else:
+            transformer_output = torch.mean(
+                self.transformer(input).last_hidden_state, 
+                dim=1
+            )
+            combined_output = torch.cat(
+                (transformer_output, extra_input.unsqueeze(1)), 
+                dim=1
+            )
         output = self.mlp(combined_output)
         
         return output
     
+
 class CutFreeModel:
     def __init__(self, 
-                 load_model=False, 
-                 model_info=None):
+                 model_info=None,
+                 load_model=False):
+        self.CUR_DIR = CUR_DIR
+        self.BATCH_SIZE = BATCH_SIZE
+        self.MAX_SEQ_LENGTH = MAX_SEQ_LENGTH
+        self.EARLY_STOPPING = EARLY_STOPPING
+
         self.model_info = model_info
-
-        self.BATCH_SIZE = 512
-        self.MAX_SEQ_LENGTH = 89
-        self.EARLY_STOPPING = 5
-
-        self.cur_dir = os.path.dirname(os.path.realpath(__file__))
-
         self.load_model = load_model
         if load_model:
-            self.load_dir = f"{self.cur_dir}/models/cutfree-v{model_info[0]}"
+            self.load_dir = f"{self.CUR_DIR}/models/cutfree-v{model_info[0]}"
             self.vocab = torch.load(
                 f"{self.load_dir}/vocab.pt"
             )
@@ -98,25 +143,20 @@ class CutFreeModel:
         else:
             self.save_dir = SaveDirectory("cutfree").get_dir()
             self.classes = np.array([0, 1])
-            self.hyperparameters = {
-                "input_dims": 32,
-                "num_heads": 16,
-                "num_layers": 1,
-                "ff_dims": 64,
-                "enc_dropout": 0.40,
-                "num_mlp_layers": 2,
-                "mlp_dims": [256, 128],
-                "mlp_dropout": 0.20, 
-                "optimizer_name": "AdamW",
-                "lr": 5e-4,
-                "epochs": 250
-            }
+            self.hyperparameters = HYPERPARAMETERS
 
     def get_data(self, predict=False, pred_df=None):
         if pred_df is None:
             pred_df = pd.read_csv(
-                f"{self.cur_dir}/simulations/runtime_data.csv"
+                f"{self.CUR_DIR}/simulations/runtime_data.csv"
             )
+
+            class_weights = pred_df["Target"].value_counts(normalize=True)
+            self.class_weights = torch.tensor(
+                [1.0 / class_weights[0],
+                    1.0 / class_weights[1]],
+                dtype=torch.float
+            ).to(DEVICE)
 
         # Tokenize and load data
         inputs, inputs_dims, targets, self.vocab = Tokenizer(
@@ -151,18 +191,7 @@ class CutFreeModel:
         )
 
     def get_model(self, load_fold=False, predict=False):
-        model = Model(
-            vocab_size=len(self.vocab), 
-            input_dims=self.hyperparameters["input_dims"], 
-            num_heads=self.hyperparameters["num_heads"],
-            num_layers=self.hyperparameters["num_layers"],
-            ff_dims=self.hyperparameters["ff_dims"],
-            max_seq_length=self.MAX_SEQ_LENGTH,
-            enc_dropout=self.hyperparameters["enc_dropout"],
-            mlp_dims=self.hyperparameters["mlp_dims"],
-            num_classes=len(self.classes),
-            mlp_dropout=self.hyperparameters["mlp_dropout"]
-        ).to(DEVICE)
+        model = Model(self.vocab, self.classes).to(DEVICE)
 
         if self.load_model:
             model.load_state_dict(
@@ -186,11 +215,9 @@ class CutFreeModel:
                 optim, 
                 optimizer_name
             )(model.parameters(), lr=lr)
-            class_weights = torch.tensor(
-                [1.0, 1.0], 
-                dtype=torch.float
+            criterion = nn.CrossEntropyLoss(
+                weight= self.class_weights
             ).to(DEVICE)
-            criterion = nn.CrossEntropyLoss(weight=class_weights).to(DEVICE)
 
             return model, optimizer, criterion
     
@@ -235,10 +262,17 @@ class CutFreeModel:
             T = Train(model, optimizer, criterion, DEVICE)
             best_loss = math.inf
             selected_epoch = 0
-            for epoch in range(EPOCHS):
+            for epoch in range(EPOCHS):                    
                 train_loss, train_acc = T.train(train_loader)
                 val_loss, val_acc = T.evaluate(val_loader)[:2]
-                if val_loss <= best_loss and val_loss <= (train_loss * 1.01):
+                if epoch == 0:
+                    best_loss = val_loss
+                    selected_epoch = epoch
+                    torch.save(
+                        model.state_dict(), 
+                        f"{self.save_dir}/model_{fold}.pt"
+                    )
+                elif val_loss <= best_loss and val_loss <= (train_loss * 1.01):
                     best_loss = val_loss
                     selected_epoch = epoch
                     torch.save(

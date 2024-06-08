@@ -1,13 +1,14 @@
 # System imports
 import os
+import sys
 
 # Third-party imports
-import pandas as pd
 import torch
 
 # Local application imports
-from config import DEVICE, SEED
 from cutfree_model import CutFreeModel
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from pytools.config import DEVICE, SEED
 
 # Clear GPU cache
 torch.cuda.empty_cache()
