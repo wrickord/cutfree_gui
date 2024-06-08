@@ -1,0 +1,353 @@
+<style>
+  .title {
+    margin-top: 50px;
+  }
+
+  .subtitle {
+    margin-top: 20px;
+  }
+
+  .break {
+    margin-top: 50px;
+    margin-bottom: 50px;
+  }
+
+  .button {
+    font-weight: bold;
+    padding: 10px 20px;
+    font-size: 16px;
+    margin-top: 50px;
+  }
+
+  .container {
+    width: 100%;
+  }
+
+  .left {
+    width: 65%;
+    float: left;
+  }
+
+  .right {
+    width: 35%;
+    float: right;
+    margin-top: 50px;
+  }
+
+  .table {
+    border:1px solid #C0C0C0;
+    border-collapse:collapse;
+    padding:5px;
+  }
+
+  .table th {
+    border:1px solid #C0C0C0;
+    padding:5px;
+    background:#F0F0F0;
+  }
+  
+  .table td {
+    border:1px solid #C0C0C0;
+    padding:5px;
+  }
+</style>
+
+<div >
+  <h1 
+    class="title"> CutFree: Randomized DNA Barcodes without Restriction Sites 
+  </h1>
+
+  <button id="openPopup">More Information</button>
+
+  <dialog id="popup">
+    <h2>More Information</h2>
+
+    <hr class="break" />
+
+    <div>
+      <h3>Starting Sequence:</h3>
+      <p>
+        Starting DNA sequence that should be blocked from containing 
+        restriction sites represented using IUB Codes. To generate a set of 
+        barcodes with the highest diversity, start with a string of N's the 
+        length of your oligo.
+      </p>
+    </div>
+    
+    <div>
+      <h3>Sites to Block:</h3>
+      <p>
+        Sequences to block from the oligo pools. Separate multiple 
+        sequences by commas.
+      </p>
+    </div>
+    
+    <div>
+      <h3>Minimum # of Blocks:</h3>
+      <p>
+        Minimum number of blocks at each site, i.e. the minimum number of 
+        changes that need to be made for a cut site to appear anywhere in 
+        the oligo.
+      </p>
+      <p>
+        Default is 1.
+      </p>
+    </div>
+    
+    <div>
+      <h3>Increase Diversity:</h3>
+      <p>
+        If this is set to yes, re-run the optimization to randomize the 
+        codes while maintaining the same number of oligos. 
+      </p>
+      <p>
+        Default is no. Yes is only valid for the CutFree algorithm.
+      </p>
+    </div>
+
+    <div>
+      <h3>Algorithm Choice:</h3>
+      <p>
+        If this is set to auto, our model will determine the optimal algorithm
+        for the inputs specified. Otherwise, the user can select the specific
+        CutFree implementation they would like used. 
+      </p>
+      <p>
+        Default is auto.
+      </p>
+    </div>
+    
+    <hr class="break" />
+
+    <h3>
+      A new oligo is generated each time the 'Make Randomer' button is 
+      pressed.
+    </h3>
+
+    <hr class="break" />
+
+    <button id="closePopup">Close</button>
+  </dialog>
+  <script>
+    // Get references to the button and dialog elements
+    const openButton = document.getElementById("openPopup");
+    const closeButton = document.getElementById("closePopup");
+    const popup = document.getElementById("popup");
+
+    // Add event listener to open the pop-up
+    openButton.addEventListener("click", () => {
+      popup.showModal();
+    });
+
+    // Add event listener to close the pop-up
+    closeButton.addEventListener("click", () => {
+      popup.close();
+    });
+  </script> 
+</div>
+
+<div>
+  <form id="resetForm" action="/" method="post">
+    {% csrf_token %}
+    <p><button id="openPopup">Reset Page</button></p>
+  </form>
+</div>
+
+<div>
+  <form id="cutfreeForm" action="/cutfree/" method="post">
+    {% csrf_token %}
+    
+    <div class="container">
+      <div class="left">
+      
+        <h3 class="title"> <strong> Starting Sequence: </strong> </h3>
+        <input 
+          id="starting_oligo" 
+          name="starting_oligo" 
+          draggable="true" 
+          type="text" 
+          style="width: 500px;" 
+          v-model="starting_oligo"
+          value="{{ starting_oligo }}"  
+          placeholder="NNNNNNNNNNNNNNNNNNNN" 
+        />
+    
+        <h3 class="subtitle"> 
+          <strong> Sites to Block (Comma Separated): </strong> 
+        </h3>
+        <input 
+          id="blocking_sites" 
+          name="blocking_sites" 
+          draggable="true" 
+          type="text" 
+          style="width: 500px;" 
+          v-model="blocking_sites"
+          value="{{ blocking_sites }}"   
+          placeholder="GGTCTC, GGCCGG" 
+        />
+    
+        <h3 class="subtitle"> 
+          <strong> Minimum # of Blocks: </strong> 
+        </h3>
+        <input 
+          id="min_blocks" 
+          name="min_blocks" 
+          draggable="true" 
+          type="text" 
+          style="width: 50px;" 
+          v-model="min_blocks" 
+          value="{{ min_blocks }}"
+          placeholder="1" 
+        />
+    
+        <h3 class="subtitle"> 
+          <strong> 
+            <label for="increase_diversity"> Increase Diversity: </label> 
+          </strong> 
+        </h3>
+        <select 
+          id="increase_diversity" 
+          name="increase_diversity" 
+          class="select-with-padding"
+        >
+          <option 
+            value="no" 
+            {% if increase_diversity == "no" %} selected {% endif %}
+            > No (Default)
+          </option>
+          <option 
+            value="yes" 
+            {% if increase_diversity == "yes" %} selected {% endif %}
+            > Yes
+          </option>
+        </select>
+    
+        <h3 class="subtitle"> 
+          <strong> 
+            <label for="algorithm_choice"> Algorithm Choice: </label> 
+          </strong> 
+        </h3>
+        <select 
+          id="algorithm_choice" 
+          name="algorithm_choice" 
+          class="select-with-padding"
+        >
+          <option 
+            value="auto" 
+            {% if algorithm_choice == "auto" %} selected {% endif %}
+            > Auto (Default) 
+          </option>
+          <option 
+            value="cutfree" 
+            {% if algorithm_choice == "cutfree" %} selected {% endif %}
+            > CutFree
+          </option>
+          <option 
+            value="cutfree_rl" 
+            {% if algorithm_choice == "cutfree_rl" %} selected {% endif %}
+            > CutFreeRL
+          </option>
+        </select>
+      </div>
+
+      <div class="right">
+        <table class="table">
+          <caption></caption>	<thead>	<tr>		<th>Code</th>
+            <th>Base(s)</th>
+          </tr>	</thead>	<tbody>	<tr>
+            <td>N</td>
+            <td>A, C, G, T</td>
+          </tr>
+          <tr>
+            <td>D</td>
+            <td>A, G, T</td>
+          </tr>
+          <tr>
+            <td>V</td>
+            <td>A, C, G</td>
+          </tr>
+          <tr>
+            <td>B</td>
+            <td>C, G, T</td>
+          </tr>
+          <tr>
+            <td>H</td>
+            <td>A, C, T</td>
+          </tr>
+          <tr>
+            <td>R</td>
+            <td>A, G</td>
+          </tr>
+          <tr>
+            <td>Y</td>
+            <td>C, T</td>
+          </tr>
+          <tr>
+            <td>M</td>
+            <td>A, C</td>
+          </tr>
+          <tr>
+            <td>K</td>
+            <td>G, T</td>
+          </tr>
+          <tr>
+            <td>S</td>
+            <td>C, G</td>
+          </tr>
+          <tr>
+            <td>W</td>
+            <td>A, T</td>
+          </tr>
+          <tr>
+            <td>A</td>
+            <td>A</td>
+          </tr>
+          <tr>
+            <td>C</td>
+            <td>C</td>
+          </tr>
+          <tr>
+            <td>G</td>
+            <td>G</td>
+          </tr>
+          <tr>
+            <td>T</td>
+            <td>T</td>
+          </tr>
+          <tbody>
+        </table>
+      </div>
+    </div>
+
+    <input type="submit" value="Make Randomer" class="button" />
+
+  </form>
+
+  <script>
+    if ((
+      window.performance && window.performance.navigation.type
+    ) === window.performance.navigation.TYPE_RELOAD) {
+        document.getElementById("cutfreeForm").reset();
+    }
+  </script>
+
+</div>
+
+<div>
+  <hr class="break" />
+
+  <div class="cutfree-output">
+    <h2> Result (Randomer): </h2>
+    <p> {{ cutfree_output_value }} </p>
+  </div>
+  
+  <div class="degeneracy-output">
+    <h2> Degeneracy: </h2>
+    <p> {{ degeneracy_value }} </p>
+  </div>
+
+  <div class="algorithm_used-output">
+    <h2> Algorithm Used: </h2>
+    <p> {{ algorithm_used }} </p>
+  </div>
+</div>
