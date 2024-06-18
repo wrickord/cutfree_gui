@@ -337,7 +337,15 @@
   <hr class="break" />
 
   <div class="cutfree-output">
-    <h2> Result (Randomer): </h2>
+    <h2>
+      Randomer: 
+      {% if verified is None %} 
+      {% else %} 
+        {% if verified %} &#10003; (Solution Verified) 
+        {% else %} &#10007; (Solution Invalid) 
+        {% endif %}
+      {% endif %}
+    </h2>
     <p> {{ cutfree_output_value }} </p>
   </div>
   

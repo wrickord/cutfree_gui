@@ -2,10 +2,10 @@
 import os
 import sys
 import logging
-import subprocess
 import asyncio
 
 # Third-party imports
+import numpy as np
 from django.shortcuts import render
 from django.http import HttpResponse
 
@@ -17,8 +17,26 @@ from models import CutFreeModel
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# Constants
 ENV = os.environ.copy()
 ENV["JULIA_PROJECT"] = "JULIA_VENV"
+IUB_CODES = {
+    "A": np.array(["A"]),
+    "C": np.array(["C"]),
+    "G": np.array(["G"]),
+    "T": np.array(["T"]),
+    "R": np.array(["A", "G"]),
+    "Y": np.array(["C", "T"]),
+    "S": np.array(["C", "G"]),
+    "W": np.array(["A", "T"]),
+    "K": np.array(["G", "T"]),
+    "M": np.array(["A", "C"]),
+    "B": np.array(["C", "G", "T"]),
+    "D": np.array(["A", "G", "T"]),
+    "H": np.array(["A", "C", "T"]),
+    "V": np.array(["A", "C", "G"]),
+    "N": np.array(["A", "C", "G", "T"])
+}
 
 # Helper functions to call algorithms
 def select_algorithm(starting_oligo, restriction_sites):
@@ -35,6 +53,31 @@ def select_algorithm(starting_oligo, restriction_sites):
         return "cutfree"
     else:
         return "cutfree_rl"
+
+def check_randomer(randomer, recognition_sites):
+    for recognition_site in recognition_sites:
+        for index in range(len(randomer) - len(recognition_site) + 1):
+            counter = 0
+            window = randomer[index : index + len(recognition_site)]
+
+            # Check each recognition site base
+            for char, base in zip(window, recognition_site):
+                char = char.upper()
+                base = base.upper()
+
+                # Skip if either is a dash
+                if char == "-" or base == "-":
+                    counter += 1
+                    continue
+
+                if np.any(np.isin(IUB_CODES[char], IUB_CODES[base])):
+                    counter += 1
+
+            # Check to see if the entire recognition site is in the window
+            if counter == len(recognition_site):
+                return False
+
+    return True
 
 async def run(starting_oligo, 
               blocking_sites, 
@@ -71,22 +114,36 @@ async def run(starting_oligo,
         )
         stdout, _ = await process.communicate()
         result = stdout.decode().strip().split("\n")[-1]
-
-    arguments = f'get_degeneracy("{result}")'
-    command = [
-        'julia', 
-        '-e', 
-        f'include("algorithms/cutfree.jl"); {arguments}'
-    ]
-    process = await asyncio.create_subprocess_exec(
-        *command, 
-        stdout=asyncio.subprocess.PIPE,
-        env=ENV
-    )
-    stdout, _ = await process.communicate()
-    degeneracy = stdout.decode().strip()
     
-    return result, degeneracy
+    if "-" in result:
+        algo_used = "CutFree" if use_rl else "CutFreeRL"
+        result = "Error: Algorithm used could not find a solution. Please " + \
+            f"try again with the {algo_used} algorithm."
+        degeneracy = 0
+    elif " " in result.strip():
+        result = "Error: Invalid input. Please check your input and try again."
+        degeneracy = 0
+    else: 
+        arguments = f'get_degeneracy("{result}")'
+        command = [
+            'julia', 
+            '-e', 
+            f'include("algorithms/cutfree.jl"); {arguments}'
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *command, 
+            stdout=asyncio.subprocess.PIPE,
+            env=ENV
+        )
+        stdout, _ = await process.communicate()
+        degeneracy = stdout.decode().strip()
+
+        check_result = check_randomer(
+            result, 
+            blocking_sites.split(", ")
+        )
+    
+    return result, degeneracy, check_result
     
 async def main(starting_oligo, 
                blocking_sites,
@@ -108,7 +165,7 @@ async def main(starting_oligo,
     else:
         return "Error: Invalid algorithm choice or parameters.", 0, "NONE"
     
-    result, degeneracy = await run(
+    result, degeneracy, check_result = await run(
         starting_oligo, 
         blocking_sites, 
         min_blocks, 
@@ -118,7 +175,7 @@ async def main(starting_oligo,
 
     algorithm = "CutFreeRL" if use_rl else "CutFree"
 
-    return result, degeneracy, algorithm
+    return result, degeneracy, algorithm, check_result
 
 # View for the cutfree page
 async def index(request):
@@ -131,13 +188,14 @@ async def index(request):
             increase_diversity = str(request.POST.get("increase_diversity"))
             algorithm_choice = str(request.POST.get("algorithm_choice"))
 
-            cutfree_output, degeneracy, algorithm_used = await main(
-                starting_oligo, 
-                blocking_sites, 
-                min_blocks, 
-                increase_diversity, 
-                algorithm_choice
-            )
+            cutfree_output, degeneracy, algorithm_used, check_result = \
+                await main(
+                    starting_oligo, 
+                    blocking_sites, 
+                    min_blocks, 
+                    increase_diversity, 
+                    algorithm_choice
+                )
             
             context = {
                 "starting_oligo": starting_oligo,
@@ -147,7 +205,8 @@ async def index(request):
                 "algorithm_choice": algorithm_choice,
                 "cutfree_output_value": cutfree_output, 
                 "degeneracy_value": degeneracy,
-                "algorithm_used": algorithm_used
+                "algorithm_used": algorithm_used,
+                "verified": check_result
             }
             
             return render(request, "cutfree.html", context)
@@ -160,7 +219,8 @@ async def index(request):
                 "algorithm_choice": "",
                 "cutfree_output_value": "", 
                 "degeneracy_value": "",
-                "algorithm_used": ""
+                "algorithm_used": "",
+                "verified": None
             }
             
             return render(request, "cutfree.html", context)

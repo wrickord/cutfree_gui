@@ -20,6 +20,7 @@ from pytools.directory import SaveDirectory
 from pytools.dataloaders import Dataloader
 from pytools.tokenizer import Tokenizer
 from pytools.transformer import Transformer
+from pytools.transformer_optuna import TransformerOptuna
 from pytools.mlp import MLP
 from pytools.train import Train
 from pytools.analyze import Analyze
@@ -29,30 +30,30 @@ from pytools.predict import Predict
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 BATCH_SIZE = 128
 MAX_SEQ_LENGTH = 89
-EARLY_STOPPING = 30
-CUSTOM_MODEL = True
+EARLY_STOPPING = 5
+CUSTOM_MODEL = False
 if CUSTOM_MODEL:
     HYPERPARAMETERS = {
-        "input_dims": 64,
-        "num_heads": 8,
-        "num_layers": 1,
-        "ff_dims": 64,
+        "input_dims": 128,
+        "num_heads": 4,
+        "num_layers": 2,
+        "ff_dims": 8,
         "enc_dropout": 0.30,
-        "num_mlp_layers": 2,
-        "mlp_dims": [256, 128],
-        "mlp_dropout": 0.20, 
+        "num_mlp_layers": 5,
+        "mlp_dims": [64, 16, 32, 128, 256],
+        "mlp_dropout": 0.05, 
         "optimizer_name": "AdamW",
-        "lr": 1e-3,
+        "lr": 5e-5,
         "epochs": 250
     }
 else:
-    MODEL_NAME = "InstaDeepAI/nucleotide-transformer-v2-50m-multi-species" # "dslim/distilbert-NER"
+    MODEL_NAME = "InstaDeepAI/nucleotide-transformer-v2-50m-multi-species"
     HYPERPARAMETERS = {
-        "num_mlp_layers": 3,
-        "mlp_dims": [512, 256, 128],
+        "num_mlp_layers": 5,
+        "mlp_dims": [512, 256, 128, 64, 32],
         "mlp_dropout": 0.20, 
         "optimizer_name": "AdamW",
-        "lr": 1e-3,
+        "lr": 5e-5,
         "epochs": 250
     }
 
@@ -214,15 +215,32 @@ class CutFreeModel:
 
             return model, optimizer, criterion
     
-    def train(self):
+    def train(self, optuna=False):
         inputs, inputs_dims, targets = self.get_data()
         self.hyperparameters["vocab_size"] = len(self.vocab)
+
+        if optuna:
+            self.hyperparameters = TransformerOptuna(
+                inputs,
+                inputs_dims,
+                targets,
+                self.classes,
+                self.class_weights,
+                self.save_dir,
+                DEVICE, 
+                self.EARLY_STOPPING,
+                self.BATCH_SIZE,
+                SEED,
+                len(self.vocab), 
+                self.MAX_SEQ_LENGTH, 
+                len(self.classes)
+            ).run_optuna()
 
         # Save hyperparameters, classes, and vocab using torch
         self.save_info()
 
         # Train model
-        N_SPLITS = 10
+        N_SPLITS = 5
         EPOCHS = self.hyperparameters["epochs"]
         train_losses = [[] for _ in range(N_SPLITS)]
         val_losses = [[] for _ in range(N_SPLITS)]

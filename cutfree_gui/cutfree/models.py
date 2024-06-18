@@ -36,8 +36,8 @@ from pytools.predict import Predict
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 BATCH_SIZE = 128
 MAX_SEQ_LENGTH = 89
-EARLY_STOPPING = 30
-CUSTOM_MODEL = True
+EARLY_STOPPING = 5
+CUSTOM_MODEL = False
 if CUSTOM_MODEL:
     HYPERPARAMETERS = {
         "input_dims": 64,
@@ -55,11 +55,11 @@ if CUSTOM_MODEL:
 else:
     MODEL_NAME = "InstaDeepAI/nucleotide-transformer-v2-50m-multi-species"
     HYPERPARAMETERS = {
-        "num_mlp_layers": 3,
-        "mlp_dims": [512, 256, 128],
+        "num_mlp_layers": 5,
+        "mlp_dims": [512, 256, 128, 64, 32],
         "mlp_dropout": 0.20, 
         "optimizer_name": "AdamW",
-        "lr": 1e-3,
+        "lr": 5e-5,
         "epochs": 250
     }
 

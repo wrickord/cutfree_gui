@@ -1,6 +1,0 @@
-Django==4.2.2
-julia==0.6.1
-PyCall==2.2
-scikit-learn==1.2.2
-gurobipy==10.0.1
-juliacall==0.9.13

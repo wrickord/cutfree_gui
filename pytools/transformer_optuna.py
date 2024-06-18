@@ -11,20 +11,62 @@ import optuna
 from optuna.trial import TrialState
 
 # Local application imports
+from pytools.config import DEVICE, SEED
 from pytools.dataloaders import Dataloader
 from pytools.transformer import Transformer
 from pytools.mlp import MLP
 from pytools.train import Train
 
 
-class Optuna:
+class Model(nn.Module):
+    def __init__(self, 
+                 hyperparameters, 
+                 max_seq_length, 
+                 vocab_size, 
+                 classes=None):
+        super(Model, self).__init__()
+
+        self.transformer = Transformer(
+            vocab_size=vocab_size, 
+            input_dims=hyperparameters["input_dims"], 
+            num_heads=hyperparameters["num_heads"],
+            num_layers=hyperparameters["num_layers"],
+            ff_dims=hyperparameters["ff_dims"],
+            max_seq_length=max_seq_length,
+            dropout=hyperparameters["enc_dropout"]
+        )
+        mlp_input_dims = hyperparameters["input_dims"] + 1
+        
+        self.mlp = MLP(
+            input_dims=mlp_input_dims,
+            num_layers=hyperparameters["num_mlp_layers"],
+            mlp_dims=hyperparameters["mlp_dims"],
+            num_classes=len(classes),
+            dropout=hyperparameters["mlp_dropout"]
+        )
+
+    def forward(self, input, extra_input):
+        transformer_output = self.transformer(input)
+        combined_output = torch.cat(
+            (transformer_output, extra_input.unsqueeze(1)), 
+            dim=1
+        )
+        output = self.mlp(combined_output)
+        
+        return output
+    
+
+class TransformerOptuna:
     def __init__(
-        self, inputs, targets, classes, save_dir, DEVICE, EARLY_STOPPING,
-        BATCH_SIZE, RANDOM_STATE, VOCAB_SIZE, MAX_SEQ_LENGTH, NUM_CLASSES
+        self, inputs, inputs_dims, targets, classes, weights, save_dir, DEVICE, 
+        EARLY_STOPPING, BATCH_SIZE, RANDOM_STATE, VOCAB_SIZE, MAX_SEQ_LENGTH, 
+        NUM_CLASSES
     ):
         self.inputs = inputs
+        self.inputs_dims = inputs_dims
         self.targets = targets
         self.classes = classes
+        self.class_weights = weights
         self.save_dir = save_dir
         self.DEVICE = DEVICE
         self.EARLY_STOPPING = EARLY_STOPPING
@@ -38,65 +80,71 @@ class Optuna:
         # Get hyperparameters
         input_dims = trial.suggest_categorical(
             "input_dims",
-            [128, 256, 512, 1024]
+            [32, 64, 128, 256, 512]
         )
-        encoder = Transformer(
-            vocab_size=self.VOCAB_SIZE, 
-            input_dims=input_dims,
-            num_heads=trial.suggest_categorical(
-                "num_heads", 
-                [4, 8, 16, 32, 64, 128]
-            ),
-            num_layers=trial.suggest_categorical(
-                "num_layers", 
-                [1, 2, 3]
-            ),
-            ff_dims=trial.suggest_categorical(
-                "ff_dims", 
-                [8, 16, 32, 64, 128, 256]
-            ),
-            max_seq_length=self.MAX_SEQ_LENGTH,
-            dropout=trial.suggest_float("enc_dropout", 0, 0.5, step=0.05),
+        num_heads=trial.suggest_categorical(
+            "num_heads", 
+            [4, 8, 16, 32]
         )
-        decoder = MLP(
-            input_dims=input_dims,
-            num_layers=trial.suggest_categorical(
-                "num_mlp_layers", 
-                [1, 2, 3, 4, 5, 6]
-            ),
-            mlp_dims=[
-                trial.suggest_categorical(
-                    "mlp_dims1", 
-                    [16, 32, 64, 128, 256, 512, 1024, 2048]
-                ),
-                trial.suggest_categorical(
-                    "mlp_dims2", 
-                    [16, 32, 64, 128, 256, 512, 1024, 2048]
-                ),
-                trial.suggest_categorical(
-                    "mlp_dims3", 
-                    [16, 32, 64, 128, 256, 512, 1024, 2048]
-                ),
-                trial.suggest_categorical(
-                    "mlp_dims4", 
-                    [16, 32, 64, 128, 256, 512, 1024, 2048]
-                ),
-                trial.suggest_categorical(
-                    "mlp_dims5", 
-                    [16, 32, 64, 128, 256, 512, 1024, 2048]
-                ),
-                trial.suggest_categorical(
-                    "mlp_dims6", 
-                    [16, 32, 64, 128, 256, 512, 1024, 2048]
-                )
-            ],
-            num_classes=self.NUM_CLASSES,
-            dropout=trial.suggest_float("mlp_dropout", 0, 0.5, step=0.05)
+        num_layers=trial.suggest_categorical(
+            "num_layers", 
+            [1, 2, 3, 4]
         )
-        model = nn.Sequential(
-            encoder, 
-            decoder
-        ).to(self.DEVICE)
+        ff_dims=trial.suggest_categorical(
+            "ff_dims", 
+            [8, 16, 32, 64, 128, 256]
+        )
+        dropout=trial.suggest_float("enc_dropout", 0, 0.8, step=0.05)
+        num_layers=trial.suggest_categorical(
+            "num_mlp_layers", 
+            [1, 2, 3, 4, 5, 6]
+        )
+        mlp_dims=[
+            trial.suggest_categorical(
+                "mlp_dims1", 
+                [16, 32, 64, 128, 256, 512, 1024, 2048]
+            ),
+            trial.suggest_categorical(
+                "mlp_dims2", 
+                [16, 32, 64, 128, 256, 512, 1024, 2048]
+            ),
+            trial.suggest_categorical(
+                "mlp_dims3", 
+                [16, 32, 64, 128, 256, 512, 1024, 2048]
+            ),
+            trial.suggest_categorical(
+                "mlp_dims4", 
+                [16, 32, 64, 128, 256, 512, 1024, 2048]
+            ),
+            trial.suggest_categorical(
+                "mlp_dims5", 
+                [16, 32, 64, 128, 256, 512, 1024, 2048]
+            ),
+            trial.suggest_categorical(
+                "mlp_dims6", 
+                [16, 32, 64, 128, 256, 512, 1024, 2048]
+            )
+        ]
+        dropout=trial.suggest_float("mlp_dropout", 0, 0.8, step=0.05)
+
+        hyperparameters = {
+            "input_dims": input_dims,
+            "num_heads": num_heads,
+            "num_layers": num_layers,
+            "ff_dims": ff_dims,
+            "enc_dropout": dropout,
+            "num_mlp_layers": num_layers,
+            "mlp_dims": mlp_dims,
+            "mlp_dropout": dropout
+        }
+
+        model = Model(
+            hyperparameters, 
+            self.MAX_SEQ_LENGTH, 
+            self.VOCAB_SIZE, 
+            self.classes
+        ).to(DEVICE)
+
         return model
 
     def objective(self, trial):
@@ -115,10 +163,12 @@ class Optuna:
             D = Dataloader(self.DEVICE, self.BATCH_SIZE, self.RANDOM_STATE)
             train_loader, val_loader = D.get_train_loaders(
                 self.inputs[train_val_idx], 
+                self.inputs_dims[train_val_idx],
                 self.targets[train_val_idx]
             )
             test_loader = D.get_test_loader(
                 self.inputs[test_idx], 
+                self.inputs_dims[test_idx],
                 self.targets[test_idx]
             )
 
@@ -130,12 +180,14 @@ class Optuna:
                 "optimizer", 
                 ["RMSprop", "AdamW", "Adam", "SGD"]
             )
-            lr = trial.suggest_float("lr", 1e-5, 1e-5, log=True)
+            lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
             optimizer = getattr(
                 optim, 
                 optimizer_name
             )(model.parameters(), lr=lr)
-            criterion = nn.CrossEntropyLoss().to(self.DEVICE) 
+            criterion = nn.CrossEntropyLoss(
+                weight=self.class_weights
+            ).to(self.DEVICE) 
 
             # Set the epochs
             self.EPOCHS = 250
@@ -171,6 +223,7 @@ class Optuna:
 
         # Get average test loss
         test_loss = sum(test_losses) / N_SPLITS
+        
         return test_loss
 
     def analyze_study(self, study, trial):
@@ -211,7 +264,7 @@ class Optuna:
     def run_optuna(self):
         study = optuna.create_study(
             direction="minimize", 
-            study_name="peptide_transformer"
+            study_name="cutfree_transformer"
         )
         study.optimize(self.objective, n_trials=150)
 

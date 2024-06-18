@@ -22,8 +22,9 @@ if __name__ == "__main__":
     # For training
     train = True
     if train:
+        optuna = False
         model = CutFreeModel()
-        model.train()
+        model.train(optuna=optuna)
 
     predict = not train
     if predict:
